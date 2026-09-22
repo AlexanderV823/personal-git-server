@@ -81,14 +81,25 @@ if [[ "$main_choice" == "2" ]]; then
 
     echo -e "\n${BLUE}=== Шаг 5: Умная очистка правил UFW ===${NC}"
     if command -v ufw &>/dev/null; then
-        echo "Удаляем созданные правила веб-панели из брандмауэра..."
-        # Пробуем удалить как локальное, так и глобальное правило, чтобы гарантировать очистку
-        if [ -n "$LOCAL_SUBNET" ]; then
-            sudo ufw delete allow from "$LOCAL_SUBNET" to any port "$del_web_port" proto tcp || true
+        echo "Поиск и автоматическое удаление всех правил для порта $del_web_port..."
+        
+        # Получаем список номеров всех правил, где упоминается нужный порт веб-панели,
+        # очищаем пробелы и сортируем строго по убыванию (в обратном порядке)
+        RULES_TO_DELETE=$(sudo ufw status numbered | grep -E "\[[ 0-9]+\]" | grep ":$del_web_port" | awk -F'[' '{print $2}' | awk -F']' '{print $1}' | tr -d ' ' | sort -rn)
+
+        if [ -n "$RULES_TO_DELETE" ]; then
+            for rule_num in $RULES_TO_DELETE; do
+                # Используем --force, чтобы UFW не запрашивал подтверждение на каждый чих
+                sudo ufw --force delete "$rule_num"
+                echo "Правило UFW №$rule_num для порта $del_web_port успешно удалено."
+            done
+            sudo ufw reload
+            echo -e "${GREEN}[УСПЕШНО] Все правила брандмауэра для порта $del_web_port очищены.${NC}"
+        else
+            echo "Активных правил UFW для порта $del_web_port не найдено. Очистка не требуется."
         fi
-        sudo ufw delete allow "$del_web_port"/tcp || true
-        sudo ufw reload
-        echo -e "${GREEN}[УСПЕШНО] Правила для порта $del_web_port удалены. Доступ по SSH полностью сохранен!${NC}"
+        
+        echo -e "${GREEN}Доступ по SSH полностью сохранен и защищен!${NC}"
     fi
 
     echo -e "\n${BLUE}=== Шаг 6: Очистка системы ===${NC}"
