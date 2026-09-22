@@ -74,7 +74,7 @@ elif [[ "$main_choice" == "1" ]]; then
 
     echo -e "\n${BLUE}=== Шаг 1: Обновление Debian и установка базовых утилит ===${NC}"
     sudo apt update && sudo apt upgrade -y
-    sudo apt install git wget -y
+    sudo apt install git wget ufw -y
 
     echo -e "\n${BLUE}=== Шаг 2: Создание изолированного пользователя git ===${NC}"
     if id "git" &>/dev/null; then
@@ -140,6 +140,28 @@ EOF
 
         sudo systemctl daemon-reload
         sudo systemctl enable --now forgejo
+
+        # Настройка брандмауэра UFW (Доступ строго для локальной сети)
+        echo "Настройка правил безопасности UFW..."
+        
+        # Определяем локальную подсеть роутера (например, 192.168.1.0/24)
+        LOCAL_SUBNET=$(ip route show | grep -E 'proto kernel.*scope link' | awk '{print $1}' | head -n 1)
+
+        if [ -n "$LOCAL_SUBNET" ]; then
+            # Сбрасываем правила и ставим блокировку на всё входящее по умолчанию
+            sudo ufw default deny incoming
+            sudo ufw default allow outgoing
+
+            # Разрешаем SSH (22) и веб-панель Forgejo (3000) ТОЛЬКО из локальной сети
+            sudo ufw allow from "$LOCAL_SUBNET" to any port 22 proto tcp
+            sudo ufw allow from "$LOCAL_SUBNET" to any port 3000 proto tcp
+
+            # Включаем файрвол без интерактивного запроса подтверждения
+            echo "y" | sudo ufw enable
+            echo -e "${GREEN}[УСПЕШНО] UFW включен. Доступ к SSH и Forgejo открыт только для подсети: $LOCAL_SUBNET${NC}"
+        else
+            echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось определить локальную подсеть. UFW не настроен.${NC}"
+        fi
         
         SERVER_IP=$(hostname -I | awk '{print $1}')
         echo -e "${GREEN}[УСПЕШНО] Forgejo запущен! Доступ в локальной сети: http://$SERVER_IP:3000${NC}"
