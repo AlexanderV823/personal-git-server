@@ -8,9 +8,9 @@ BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== Шаг 1: Обновление Debian и установка зависимостей ===${NC}"
+echo -e "${BLUE}=== Шаг 1: Обновление Debian и установка базовых утилит ===${NC}"
 sudo apt update && sudo apt upgrade -y
-sudo apt install git curl -y
+sudo apt install git wget -y
 
 echo -e "\n${BLUE}=== Шаг 2: Создание изолированного пользователя git ===${NC}"
 if id "git" &>/dev/null; then
@@ -44,7 +44,7 @@ if [[ $setup_web == "y" || $setup_web == "Y" ]]; then
     echo "Скачивание Forgejo..."
     cd /tmp
     # Загружаем стабильную версию
-    curl -# -LO https://code.forgejo.org/forgejo/forgejo/releases/download/v16.0.5/forgejo-16.0.5-linux-amd64
+    wget --show-progress -q https://code.forgejo.org/forgejo/forgejo/releases/download/v16.0.5/forgejo-16.0.5-linux-amd64
     sudo mv forgejo-16.0.5-linux-amd64 /usr/local/bin/forgejo
     sudo chmod +x /usr/local/bin/forgejo
 
@@ -83,7 +83,7 @@ EOF
     SERVER_IP=$(hostname -I | awk '{print $1}')
     echo -e "${GREEN}[УСПЕШНО] Forgejo запущен! Доступ в локальной сети: http://$SERVER_IP:3000${NC}"
 
-    # Настройка бэкапа SQLite3 (выполняется только если ставится веб-панель)
+    # Настройка бэкапа SQLite3
     echo -e "\n${BLUE}=== Шаг 5: Настройка бэкапа SQLite3 (Cron) ===${NC}"
     read -p "Хотите настроить автоматический ежедневный бэкап базы данных Forgejo? (y/n): " setup_backup
     if [[ $setup_backup == "y" || $setup_backup == "Y" ]]; then
@@ -96,7 +96,7 @@ EOF
                 CRON_HOUR=$(echo $backup_time | cut -d: -f1)
                 break
             else
-                echo -e "\033[0;33m[ОШИБКА] Некорректный формат времени. Используйте ЧЧ:ММ (от 00:00 до 23:59).\033[0m"
+                echo -e "${YELLOW}[ОШИБКА] Некорректный формат времени. Используйте ЧЧ:ММ (от 00:00 до 23:59).${NC}"
             fi
         done
 
