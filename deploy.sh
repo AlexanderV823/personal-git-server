@@ -80,24 +80,26 @@ if [[ "$main_choice" == "2" ]]; then
     sudo rm -f /usr/local/bin/forgejo-backup.sh
 
     echo -e "\n${BLUE}=== Шаг 5: Умная очистка правил UFW ===${NC}"
-    if command -v ufw &>/dev/null; then
+    if command -v ufw &>/dev/null || [ -x /usr/sbin/ufw ]; then
         echo "Поиск и автоматическое удаление всех правил для порта $del_web_port..."
         
-        RULES_TO_DELETE=$(sudo ufw status numbered | grep -E "\[[ 0-9]+\]" | grep -E "[[:space:]]${del_web_port}(/|[[:space:]])" | awk -F'[' '{print $2}' | awk -F']' '{print $1}' | tr -d ' ' | sort -rn)
+        RULES_TO_DELETE=$(/usr/sbin/ufw status numbered | grep -E "\[[ 0-9]+\]" | grep -E "[[:space:]]${del_web_port}(/|[[:space:]])" | awk -F'[' '{print $2}' | awk -F']' '{print $1}' | tr -d ' ' | sort -rn)
 
         if [ -n "$RULES_TO_DELETE" ]; then
             for rule_num in $RULES_TO_DELETE; do
-                # Используем --force, чтобы UFW не запрашивал подтверждение на каждый чих
-                sudo ufw --force delete "$rule_num"
-                echo "Правило UFW №$rule_num для порта $del_web_port успешно удалено."
+                # Используем полный путь к ufw, чтобы избежать проблем со средой окружения в Debian
+                sudo /usr/sbin/ufw --force delete "$rule_num"
+                echo "Правило UFW №$rule_num для端口 $del_web_port успешно удалено."
             done
-            sudo ufw reload
+            sudo /usr/sbin/ufw reload
             echo -e "${GREEN}[УСПЕШНО] Все правила брандмауэра для порта $del_web_port очищены.${NC}"
         else
             echo "Активных правил UFW для порта $del_web_port не найдено. Очистка не требуется."
         fi
         
         echo -e "${GREEN}Доступ по SSH полностью сохранен и защищен!${NC}"
+    else
+        echo "Брандмауэр UFW не найден в системе. Пропускаем очистку портов."
     fi
 
     echo -e "\n${BLUE}=== Шаг 6: Очистка системы ===${NC}"
