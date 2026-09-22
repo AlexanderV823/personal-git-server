@@ -39,8 +39,8 @@ if [[ $setup_web == "y" || $setup_web == "Y" ]]; then
     echo "Скачивание Forgejo (архитектура amd64)..."
     cd /tmp
     # Загружаем стабильную версию
-    curl -code -LO https://codeberg.org
-    sudo mv forgejo-9.0.2-linux-amd64 /usr/local/bin/forgejo
+    wget https://code.forgejo.org/forgejo/forgejo/releases/download/v16.0.5/forgejo-16.0.5-linux-amd64
+    sudo mv forgejo-16.0.5-linux-amd64 /usr/local/bin/forgejo
     sudo chmod +x /usr/local/bin/forgejo
 
     # Создание структуры папок
