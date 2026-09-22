@@ -24,6 +24,9 @@ validate_port() {
     fi
 }
 
+# Автоматическое определение локальной подсети
+LOCAL_SUBNET=$(ip route show | grep -E 'proto kernel.*scope link' | awk '{print $1}' | head -n 1)
+
 # ==========================================
 # РЕЖИМ 2: ПОЛНОЕ УДАЛЕНИЕ СЕРВЕРА
 # ==========================================
@@ -76,25 +79,16 @@ if [[ "$main_choice" == "2" ]]; then
     sudo rm -rf /var/backups/forgejo
     sudo rm -f /usr/local/bin/forgejo-backup.sh
 
-       echo -e "\n${BLUE}=== Шаг 5: Умная очистка правил UFW ===${NC}"
+    echo -e "\n${BLUE}=== Шаг 5: Умная очистка правил UFW ===${NC}"
     if command -v ufw &>/dev/null; then
-        echo "Удаляем созданные правила из брандмауэра..."
-        
-        # Переопределяем подсеть, чтобы понять, какое именно правило удалять
-        LOCAL_SUBNET=$(ip route show | grep -E 'proto kernel.*scope link' | awk '{print $1}' | head -n 1)
-        
+        echo "Удаляем созданные правила веб-панели из брандмауэра..."
+        # Пробуем удалить как локальное, так и глобальное правило, чтобы гарантировать очистку
         if [ -n "$LOCAL_SUBNET" ]; then
-            # Если подсеть есть — удаляем именно локальное правило, строго повторяя его синтаксис
             sudo ufw delete allow from "$LOCAL_SUBNET" to any port "$del_web_port" proto tcp || true
-            echo "Локальное правило для порта $del_web_port удалено."
-        else
-            # Если подсети не было и пользователь открывал порт глобально — удаляем глобальное правило
-            sudo ufw delete allow "$del_web_port"/tcp || true
-            echo "Глобальное правило для порта $del_web_port удалено."
         fi
-        
+        sudo ufw delete allow "$del_web_port"/tcp || true
         sudo ufw reload
-        echo -e "${GREEN}[УСПЕШНО] Очистка портов завершена. Доступ по SSH полностью сохранен!${NC}"
+        echo -e "${GREEN}[УСПЕШНО] Правила для порта $del_web_port удалены. Доступ по SSH полностью сохранен!${NC}"
     fi
 
     echo -e "\n${BLUE}=== Шаг 6: Очистка системы ===${NC}"
@@ -108,6 +102,7 @@ if [[ "$main_choice" == "2" ]]; then
 # ==========================================
 elif [[ "$main_choice" == "1" ]]; then
 
+    # 1. Запрос портов
     while true; do
         read -p "Введите текущий порт SSH вашего сервера (по умолчанию 22): " ssh_port
         ssh_port=${ssh_port:-22}
@@ -119,6 +114,24 @@ elif [[ "$main_choice" == "1" ]]; then
         web_port=${web_port:-3000}
         if validate_port "$web_port"; then break; else echo -e "${YELLOW}[ОШИБКА] Некорректный порт (1-65535).${NC}"; fi
     done
+
+    # 2. Выбор зон доступности в UFW
+    echo -e "\n${BLUE} Настройка зон доступности для брандмауэра UFW:${NC}"
+    
+    # Выбор для SSH
+    if [ -n "$LOCAL_SUBNET" ]; then
+        read -p "Открыть доступ к SSH ($ssh_port) для всего интернета? Если 'n' — доступ будет только из локальной сети $LOCAL_SUBNET (y/n): " ssh_global
+    else
+        echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось определить локальную подсеть. SSH будет открыт глобально.${NC}"
+        ssh_global="y"
+    fi
+
+    # Выбор для Forgejo
+    if [ -n "$LOCAL_SUBNET" ]; then
+        read -p "Открыть доступ к веб-панели Forgejo ($web_port) для всего интернета? (y/n): " web_global
+    else
+        web_global="y"
+    fi
 
     echo -e "\n${BLUE}=== Шаг 1: Обновление Debian и установка базовых утилит ===${NC}"
     sudo apt update && sudo apt upgrade -y
@@ -189,35 +202,28 @@ EOF
         sudo systemctl daemon-reload
         sudo systemctl enable --now forgejo
 
-        # Настройка брандмауэра UFW
-        echo "Настройка правил безопасности UFW..."
+        # Применение выбранных правил UFW
+        echo "Применение правил безопасности UFW..."
         
-        # Определяем локальную подсеть роутера (например, 192.168.1.0/24)
-        LOCAL_SUBNET=$(ip route show | grep -E 'proto kernel.*scope link' | awk '{print $1}' | head -n 1)
-
-        if [ -n "$LOCAL_SUBNET" ]; then
-            # Доступ к SSH доступен ТОЛЬКО из локальной сети
-            sudo ufw allow from "$LOCAL_SUBNET" to any port "$ssh_port" proto tcp
-            # Доступ к Forgejo доступен ТОЛЬКО из локальной сети
-            sudo ufw allow from "$LOCAL_SUBNET" to any port "$web_port" proto tcp
-            echo "y" | sudo ufw enable
-            echo -e "${GREEN}[УСПЕШНО] UFW настроен. SSH ($ssh_port) и Forgejo ($web_port) доступны ТОЛЬКО из локальной сети ($LOCAL_SUBNET).${NC}"
+        # Применяем правило для SSH
+        if [[ $ssh_global == "y" || $ssh_global == "Y" ]]; then
+            sudo ufw allow "$ssh_port"/tcp
+            echo -e "${GREEN}[UFW] Порт SSH ($ssh_port) открыт глобально.${NC}"
         else
-            echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось автоматически определить локальную подсеть.${NC}"
-            echo "Если этот сервер находится за роутером (NAT), открытие портов глобально безопасно."
-            echo "Если сервер подключен к интернету напрямую, открытие портов сделает их доступными всему миру."
-            
-            read -p "Хотите открыть порты SSH ($ssh_port) и Forgejo ($web_port) глобально для всех подключений? (y/n): " allow_global
-            
-            if [[ $allow_global == "y" || $allow_global == "Y" ]]; then
-                sudo ufw allow "$ssh_port"/tcp
-                sudo ufw allow "$web_port"/tcp
-                echo "y" | sudo ufw enable
-                echo -e "${GREEN}[УСПЕШНО] Порты $ssh_port и $web_port открыты глобально в UFW.${NC}"
-            else
-                echo -e "${YELLOW}Настройка UFW пропущена. Вам потребуется открыть порты $ssh_port и $web_port вручную.${NC}"
-            fi
+            sudo ufw allow from "$LOCAL_SUBNET" to any port "$ssh_port" proto tcp
+            echo -e "${GREEN}[UFW] Порт SSH ($ssh_port) защищен (доступен только из $LOCAL_SUBNET).${NC}"
         fi
+
+        # Применяем правило для Forgejo
+        if [[ $web_global == "y" || $web_global == "Y" ]]; then
+            sudo ufw allow "$web_port"/tcp
+            echo -e "${GREEN}[UFW] Веб-панель Forgejo ($web_port) открыта глобально.${NC}"
+        else
+            sudo ufw allow from "$LOCAL_SUBNET" to any port "$web_port" proto tcp
+            echo -e "${GREEN}[UFW] Веб-панель Forgejo ($web_port) защищена (доступна только из $LOCAL_SUBNET).${NC}"
+        fi
+
+        echo "y" | sudo ufw enable
         
         SERVER_IP=$(hostname -I | awk '{print $1}')
         echo -e "${GREEN}[УСПЕШНО] Forgejo запущен! Доступ: http://$SERVER_IP:$web_port${NC}"
@@ -267,6 +273,7 @@ EOF
 
             sudo chmod +x /usr/local/bin/forgejo-backup.sh
             
+            # Добавление в планировщик cron пользователя git
             (sudo -u git crontab -l 2>/dev/null; echo "$CRON_MIN $CRON_HOUR * * * /usr/local/bin/forgejo-backup.sh") | sudo -u git crontab -
             echo -e "${GREEN}[УСПЕШНО] Ежедневный бэкап настроен на $backup_time. Срок хранения: $backup_days дн. Копии: /var/backups/forgejo/${NC}"
         fi
