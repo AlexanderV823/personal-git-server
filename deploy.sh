@@ -5,6 +5,7 @@ set -e
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 
 echo -e "${BLUE}=== Шаг 1: Обновление Debian и установка зависимостей ===${NC}"
@@ -82,6 +83,7 @@ EOF
     SERVER_IP=$(hostname -I | awk '{print $1}')
     echo -e "${GREEN}[УСПЕШНО] Forgejo запущен! Доступ в локальной сети: http://$SERVER_IP:3000${NC}"
 
+    # Настройка бэкапа SQLite3 (выполняется только если ставится веб-панель)
     echo -e "\n${BLUE}=== Шаг 5: Настройка бэкапа SQLite3 (Cron) ===${NC}"
     read -p "Хотите настроить автоматический ежедневный бэкап базы данных Forgejo? (y/n): " setup_backup
     if [[ $setup_backup == "y" || $setup_backup == "Y" ]]; then
