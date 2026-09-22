@@ -28,23 +28,38 @@ if [[ "$main_choice" == "2" ]]; then
     fi
 
     echo -e "\n${BLUE}=== Шаг 1: Остановка и удаление службы Forgejo ===${NC}"
-    sudo systemctl stop forgejo || true
-    sudo systemctl disable forgejo || true
-    sudo rm -f /etc/systemd/system/forgejo.service
-    sudo systemctl daemon-reload
+    # Проверяем, существует ли файл службы в системе
+    if [ -f /etc/systemd/system/forgejo.service ]; then
+        echo "Служба Forgejo найдена. Деактивация..."
+        sudo systemctl stop forgejo || true
+        sudo systemctl disable forgejo || true
+        sudo rm -f /etc/systemd/system/forgejo.service
+        sudo systemctl daemon-reload
+        echo -e "${GREEN}[УСПЕШНО] Служба удалена.${NC}"
+    else
+        echo "Служба Forgejo не была установлена. Пропускаем."
+    fi
 
     echo -e "\n${BLUE}=== Шаг 2: Удаление конфигурации и файлов Forgejo ===${NC}"
     sudo rm -f /usr/local/bin/forgejo
     sudo rm -rf /var/lib/forgejo
     sudo rm -rf /etc/forgejo
+    echo "Компоненты веб-панели очищены."
 
     echo -e "\n${BLUE}=== Шаг 3: Удаление пользователя git и репозиториев ===${NC}"
-    sudo deluser --remove-home git || true
-    sudo rm -rf /home/git
+    if id "git" &>/dev/null; then
+        echo "Пользователь git найден. Удаление репозиториев и профиля..."
+        sudo deluser --remove-home git || true
+        sudo rm -rf /home/git
+        echo -e "${GREEN}[УСПЕШНО] Данные пользователя git стерты.${NC}"
+    else
+        echo "Пользователь git отсутствует. Пропускаем."
+    fi
 
     echo -e "\n${BLUE}=== Шаг 4: Удаление бэкапов и скриптов ===${NC}"
     sudo rm -rf /var/backups/forgejo
     sudo rm -f /usr/local/bin/forgejo-backup.sh
+    echo "Резервные копии и скрипты автоматизации удалены."
 
     echo -e "\n${BLUE}=== Шаг 5: Очистка системы ===${NC}"
     sudo apt autoremove -y
