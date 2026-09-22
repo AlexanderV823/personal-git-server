@@ -115,17 +115,11 @@ if [[ "$main_choice" == "2" ]]; then
 # ==========================================
 elif [[ "$main_choice" == "1" ]]; then
 
-    # Опрос портов в самом начале
+    # Опрос портов
     while true; do
         read -p "Введите текущий порт SSH вашего сервера (по умолчанию 22): " ssh_port
         ssh_port=${ssh_port:-22}
         if validate_port "$ssh_port"; then break; else echo -e "${YELLOW}[ОШИБКА] Некорректный порт (1-65535).${NC}"; fi
-    done
-
-    while true; do
-        read -p "Выберите порт для веб-панели Forgejo (по умолчанию 3000): " web_port
-        web_port=${web_port:-3000}
-        if validate_port "$web_port"; then break; else echo -e "${YELLOW}[ОШИБКА] Некорректный порт (1-65535).${NC}"; fi
     done
 
     echo -e "\n${BLUE}=== Шаг 1: Обновление Linux и установка базовых утилит ===${NC}"
@@ -191,6 +185,12 @@ elif [[ "$main_choice" == "1" ]]; then
     echo -e "\n${BLUE}=== Шаг 4: Установка веб-панели Forgejo ===${NC}"
     read -p "Хотите установить легковесную веб-панель Forgejo? (y/n): " setup_web
     if [[ $setup_web == "y" || $setup_web == "Y" ]]; then
+
+        while true; do
+            read -p "Выберите порт для веб-панели Forgejo (по умолчанию 3000): " web_port
+            web_port=${web_port:-3000}
+            if validate_port "$web_port"; then break; else echo -e "${YELLOW}[ОШИБКА] Некорректный порт (1-65535).${NC}"; fi
+        done
         
         # Настройка зон доступности UFW
         echo -e "\n${BLUE} Настройка зон доступности для брандмауэра UFW:${NC}"
