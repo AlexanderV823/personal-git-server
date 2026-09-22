@@ -131,16 +131,11 @@ elif [[ "$main_choice" == "1" ]]; then
     
     # Выбор для SSH
     if [ -n "$LOCAL_SUBNET" ]; then
-        read -p "Открыть доступ к SSH ($ssh_port) для всего интернета? Если 'n' — доступ будет только из локальной сети $LOCAL_SUBNET (y/n): " ssh_global
-    else
-        echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось определить локальную подсеть. SSH будет открыт глобально.${NC}"
-        ssh_global="y"
-    fi
-
-    # Выбор для Forgejo
-    if [ -n "$LOCAL_SUBNET" ]; then
+        read -p "Открыть доступ к SSH ($ssh_port) для всего интернета? Если 'n' — доступ только из локальной сети $LOCAL_SUBNET (y/n): " ssh_global
         read -p "Открыть доступ к веб-панели Forgejo ($web_port) для всего интернета? (y/n): " web_global
     else
+        echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось определить локальную подсеть. Порты будут открыты глобально.${NC}"
+        ssh_global="y"
         web_global="y"
     fi
 
@@ -159,14 +154,49 @@ elif [[ "$main_choice" == "1" ]]; then
     sudo mkdir -p "$GIT_HOME/projects"
     sudo chown -R git:git "$GIT_HOME/projects"
 
-    echo -e "\n${BLUE}=== Шаг 3: Настройка SSH-доступа для локальной сети ===${NC}"
-    read -p "Подготовить сервер для авторизации по SSH-ключу? (y/n): " setup_ssh
-    if [[ $setup_ssh == "y" || $setup_ssh == "Y" ]]; then
+    echo -e "\n${BLUE}=== Шаг 3: Настройка SSH-доступа и ключей безопасности ===${NC}"
+
+    # Локальная процедура для подготовки скрытой директории .ssh для пользователя git
+    prepare_ssh_dirs() {
         sudo -u git mkdir -p "$GIT_HOME/.ssh"
         sudo -u git touch "$GIT_HOME/.ssh/authorized_keys"
         sudo -u git chmod 700 "$GIT_HOME/.ssh"
         sudo -u git chmod 600 "$GIT_HOME/.ssh/authorized_keys"
-        echo -e "${GREEN}[УСПЕШНО] Папки для SSH-ключей готовы.${NC}"
+    }
+
+    read -p "Хотите автоматически сгенерировать НОВУЮ пару SSH-ключей на сервере? (y/n): " gen_ssh
+    if [[ $gen_ssh == "y" || $gen_ssh == "Y" ]]; then
+        # Вариант 1: Генерация нового ключа Ed25519 прямо на сервере
+        prepare_ssh_dirs
+        
+        sudo -u git ssh-keygen -t ed25519 -N "" -f "$GIT_HOME/.ssh/id_ed25519"
+        sudo -u git cat "$GIT_HOME/.ssh/id_ed25519.pub" >> "$GIT_HOME/.ssh/authorized_keys"
+        
+        # Копируем приватную часть во временную папку для возможности последующего скачивания
+        sudo cp "$GIT_HOME/.ssh/id_ed25519" /tmp/git_id_ed25519
+        sudo chmod 644 /tmp/git_id_ed25519
+        SSH_KEY_GENERATED="true"
+        echo -e "${GREEN}[УСПЕШНО] Новый ключ безопасности Ed25519 сгенерирован и добавлен в авторизованные.${NC}"
+
+        # === ИНТЕРАКТИВНЫЙ ВЫВОД ПОДСКАЗКИ КОМАНДЫ КОПИРОВАНИЯ ===
+        CURRENT_USER=$(logname || echo $USER)
+        SERVER_IP=$(hostname -I | awk '{print $1}')
+        echo -e "\n${YELLOW}🔑 КОМАНДА ДЛЯ СКАЧИВАНИЯ СОЗДАННОГО SSH-КЛЮЧА:${NC}"
+        echo "Откройте терминал на своем РАБОЧЕМ КОМПЬЮТЕРЕ и выполните (замените ИМЯ_ПОЛЬЗОВАТЕЛЯ на профиль вашего ПК):"
+        echo -e "${BLUE}scp -P $ssh_port ${CURRENT_USER}@${SERVER_IP}:/tmp/git_id_ed25519 /Users/ИМЯ_ПОЛЬЗОВАТЕЛЯ/.ssh/home_git_key${NC}"
+        echo -e "После скачивания удалите временный файл на сервере: ${YELLOW}rm /tmp/git_id_ed25519${NC}\n"
+    else
+        # Вариант 2: Пользователь отказался от генерации. Спрашиваем про подготовку под свои ключи
+        read -p "Хотите подготовить сервер для ручной привязки ваших СУЩЕСТВУЮЩИХ ключей с ПК? (y/n): " setup_own_ssh
+        if [[ $setup_own_ssh == "y" || $setup_own_ssh == "Y" ]]; then
+            # Вызов процедуры для подготовки структуры папок под чужие ключи
+            prepare_ssh_dirs
+            echo -e "${GREEN}[УСПЕШНО] Папки настроены. Вы сможете пробросить свой ключ командой ssh-copy-id.${NC}"
+        else
+            # Если ключи и папки вообще не нужны — гарантируем чистоту домашней директории пользователя git
+            sudo rm -rf "$GIT_HOME/.ssh"
+            echo -e "${YELLOW}Настройка SSH-ключей пропущена. Вход будет осуществляться по паролю пользователя git.${NC}"
+        fi
     fi
 
     echo -e "\n${BLUE}=== Шаг 4: Установка веб-панели Forgejo ===${NC}"
@@ -213,25 +243,22 @@ EOF
         sudo systemctl daemon-reload
         sudo systemctl enable --now forgejo
 
-        # Применение выбранных правил UFW
+        # Применение правил безопасности UFW
         echo "Применение правил безопасности UFW..."
-        
-        # Применяем правило для SSH
-        if [[ $ssh_global == "y" || $ssh_global == "Y" ]]; then
+        if [[ $ssh_global == "y" || $ssh_global == "Y" || -z "$LOCAL_SUBNET" ]]; then
             sudo ufw allow "$ssh_port"/tcp
             echo -e "${GREEN}[UFW] Порт SSH ($ssh_port) открыт глобально.${NC}"
         else
             sudo ufw allow from "$LOCAL_SUBNET" to any port "$ssh_port" proto tcp
-            echo -e "${GREEN}[UFW] Порт SSH ($ssh_port) защищен (доступен только из $LOCAL_SUBNET).${NC}"
+            echo -e "${GREEN}[UFW] Порт SSH ($ssh_port) доступен только из $LOCAL_SUBNET.${NC}"
         fi
 
-        # Применяем правило для Forgejo
-        if [[ $web_global == "y" || $web_global == "Y" ]]; then
+        if [[ $web_global == "y" || $web_global == "Y" || -z "$LOCAL_SUBNET" ]]; then
             sudo ufw allow "$web_port"/tcp
             echo -e "${GREEN}[UFW] Веб-панель Forgejo ($web_port) открыта глобально.${NC}"
         else
             sudo ufw allow from "$LOCAL_SUBNET" to any port "$web_port" proto tcp
-            echo -e "${GREEN}[UFW] Веб-панель Forgejo ($web_port) защищена (доступна только из $LOCAL_SUBNET).${NC}"
+            echo -e "${GREEN}[UFW] Веб-панель Forgejo ($web_port) доступна только из $LOCAL_SUBNET.${NC}"
         fi
 
         echo "y" | sudo ufw enable
@@ -255,14 +282,14 @@ EOF
                 fi
             done
 
-            while true; do
-                read -p "Сколько дней хранить резервные копии? (например, 14 или 30): " backup_days
-                if [[ $backup_days =~ ^[0-9]+$ ]] && [ "$backup_days" -gt 0 ]; then
-                    break
-                else
-                    echo -e "${YELLOW}[ОШИБКА] Пожалуйста, введите корректное число дней (больше 0).${NC}"
-                fi
-            done
+        while true; do
+            read -p "Сколько дней хранить резервные копии? (например, 30): " backup_days
+            if [[ $backup_days =~ ^[0-9]+$ ]] && [ "$backup_days" -gt 0 ]; then
+                break
+            else
+                echo -e "${YELLOW}[ОШИБКА] Введите корректное число дней.${NC}"
+            fi
+        done
 
             sudo mkdir -p /var/backups/forgejo
             sudo chown git:git /var/backups/forgejo
@@ -295,7 +322,17 @@ EOF
 
     echo -e "\n${GREEN}=== Развертывание на домашнем сервере завершено! ===${NC}"
 
+# Вывод команды для скачивания ключа, если он создавался
+if [[ "$SSH_KEY_GENERATED" == "true" ]]; then
+    CURRENT_USER=$(logname || echo $USER)
+    SERVER_IP=$(hostname -I | awk '{print $1}')
+    echo -e "\n${YELLOW}🔑 ДЛЯ СКАЧИВАНИЯ СОЗДАННОГО SSH-КЛЮЧА:${NC}"
+    echo "Выполните на своем РАБОЧЕМ КОМПЬЮТЕРЕ (замените ИМЯ_ПОЛЬЗОВАТЕЛЯ на профиль вашего ПК):"
+    echo -e "${BLUE}scp -P $ssh_port ${CURRENT_USER}@${SERVER_IP}:/tmp/git_id_ed25519 /Users/ИМЯ_ПОЛЬЗОВАТЕЛЯ/.ssh/home_git_key${NC}"
+    echo -e "После скачивания не забудьте удалить временный файл на сервере: ${YELLOW}rm /tmp/git_id_ed25519${NC}"
+fi
+
 else
-    echo -e "${YELLOW}Некорректный выбор. Пожалуйста, перезапустите скрипт и выберите 1 или 2.${NC}"
+    echo -e "${YELLOW}Некорректный выбор. Пожалуйста, перезапустите скрипт.${NC}"
     exit 1
 fi
