@@ -83,9 +83,7 @@ if [[ "$main_choice" == "2" ]]; then
     if command -v ufw &>/dev/null; then
         echo "Поиск и автоматическое удаление всех правил для порта $del_web_port..."
         
-        # Получаем список номеров всех правил, где упоминается нужный порт веб-панели,
-        # очищаем пробелы и сортируем строго по убыванию (в обратном порядке)
-        RULES_TO_DELETE=$(sudo ufw status numbered | grep -E "\[[ 0-9]+\]" | grep ":$del_web_port" | awk -F'[' '{print $2}' | awk -F']' '{print $1}' | tr -d ' ' | sort -rn)
+        RULES_TO_DELETE=$(sudo ufw status numbered | grep -E "\[[ 0-9]+\]" | grep -E "[[:space:]]${del_web_port}(/|[[:space:]])" | awk -F'[' '{print $2}' | awk -F']' '{print $1}' | tr -d ' ' | sort -rn)
 
         if [ -n "$RULES_TO_DELETE" ]; then
             for rule_num in $RULES_TO_DELETE; do
