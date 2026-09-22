@@ -83,12 +83,12 @@ EOF
     SERVER_IP=$(hostname -I | awk '{print $1}')
     echo -e "${GREEN}[УСПЕШНО] Forgejo запущен! Доступ в локальной сети: http://$SERVER_IP:3000${NC}"
 
-    # Настройка бэкапа SQLite3
+    # Настройка бэкапа SQLite3 (выполняется только если ставится веб-панель)
     echo -e "\n${BLUE}=== Шаг 5: Настройка бэкапа SQLite3 (Cron) ===${NC}"
     read -p "Хотите настроить автоматический ежедневный бэкап базы данных Forgejo? (y/n): " setup_backup
     if [[ $setup_backup == "y" || $setup_backup == "Y" ]]; then
         
-        # ИНТЕРАКТИВНЫЙ ЗАПРОС ВРЕМЕНИ
+        # 1. Запрос времени бэкапа
         while true; do
             read -p "Введите время для ежедневного бэкапа в формате ЧЧ:ММ (например, 03:30): " backup_time
             if [[ $backup_time =~ ^([0-1][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
@@ -100,30 +100,39 @@ EOF
             fi
         done
 
+        # 2. Запрос количества дней хранения бэкапов
+        while true; do
+            read -p "Сколько дней хранить резервные копии? (например, 14 или 30): " backup_days
+            if [[ $backup_days =~ ^[0-9]+$ ]] && [ "$backup_days" -gt 0 ]; then
+                break
+            else
+                echo -e "${YELLOW}[ОШИБКА] Пожалуйста, введите корректное число дней (больше 0).${NC}"
+            fi
+        done
+
         sudo mkdir -p /var/backups/forgejo
         sudo chown git:git /var/backups/forgejo
 
-        cat << 'EOF' | sudo tee /usr/local/bin/forgejo-backup.sh > /dev/null
+        # 3. Генерация скрипта бэкапа
+        cat << EOF | sudo tee /usr/local/bin/forgejo-backup.sh > /dev/null
 #!/bin/bash
 BACKUP_DIR="/var/backups/forgejo"
 DB_PATH="/var/lib/forgejo/data/gitea.db"
-DATE=$(date +%Y-%m-%d_%H-%M-%S)
+DATE=\$(date +%Y-%m-%d_%H-%M-%S)
 
-# Проверяем, существует ли база (она появится только после первого запуска в браузере)
-if [ -f "$DB_PATH" ]; then
-    sqlite3 "$DB_PATH" ".backup '$BACKUP_DIR/forgejo_db_$DATE.sqlite'"
-    chown git:git "$BACKUP_DIR/forgejo_db_$DATE.sqlite"
+if [ -f "\$DB_PATH" ]; then
+    sqlite3 "\$DB_PATH" ".backup '\$BACKUP_DIR/forgejo_db_\$DATE.sqlite'"
+    chown git:git "\$BACKUP_DIR/forgejo_db_\$DATE.sqlite"
 fi
 
-# Удаляем бэкапы старше 30 дней
-find "$BACKUP_DIR" -type f -name "*.sqlite" -mtime +30 -delete
+find "\$BACKUP_DIR" -type f -name "*.sqlite" -mtime +$backup_days -delete
 EOF
 
         sudo chmod +x /usr/local/bin/forgejo-backup.sh
         
-        # Подставляем выбранные пользователем переменные времени в cron
+        # Добавление в cron пользователя git
         (sudo -u git crontab -l 2>/dev/null; echo "$CRON_MIN $CRON_HOUR * * * /usr/local/bin/forgejo-backup.sh") | sudo -u git crontab -
-        echo -e "${GREEN}[УСПЕШНО] Ежедневный бэкап настроен на $backup_time. Копии хранятся в /var/backups/forgejo/${NC}"
+        echo -e "${GREEN}[УСПЕШНО] Ежедневный бэкап настроен на $backup_time. Срок хранения: $backup_days дн. Копии: /var/backups/forgejo/${NC}"
     fi
 
 else
