@@ -76,13 +76,25 @@ if [[ "$main_choice" == "2" ]]; then
     sudo rm -rf /var/backups/forgejo
     sudo rm -f /usr/local/bin/forgejo-backup.sh
 
-    echo -e "\n${BLUE}=== Шаг 5: Умная очистка правил UFW ===${NC}"
+       echo -e "\n${BLUE}=== Шаг 5: Умная очистка правил UFW ===${NC}"
     if command -v ufw &>/dev/null; then
-        echo "Удаляем правило веб-панели из брандмауэра..."
-        # Удаляем ТОЛЬКО порт веб-панели. SSH порт не трогаем.
-        sudo ufw delete allow "$del_web_port"/tcp || true
+        echo "Удаляем созданные правила из брандмауэра..."
+        
+        # Переопределяем подсеть, чтобы понять, какое именно правило удалять
+        LOCAL_SUBNET=$(ip route show | grep -E 'proto kernel.*scope link' | awk '{print $1}' | head -n 1)
+        
+        if [ -n "$LOCAL_SUBNET" ]; then
+            # Если подсеть есть — удаляем именно локальное правило, строго повторяя его синтаксис
+            sudo ufw delete allow from "$LOCAL_SUBNET" to any port "$del_web_port" proto tcp || true
+            echo "Локальное правило для порта $del_web_port удалено."
+        else
+            # Если подсети не было и пользователь открывал порт глобально — удаляем глобальное правило
+            sudo ufw delete allow "$del_web_port"/tcp || true
+            echo "Глобальное правило для порта $del_web_port удалено."
+        fi
+        
         sudo ufw reload
-        echo -e "${GREEN}[УСПЕШНО] Правило для порта $del_web_port удалено. Доступ по SSH сохранен.${NC}"
+        echo -e "${GREEN}[УСПЕШНО] Очистка портов завершена. Доступ по SSH полностью сохранен!${NC}"
     fi
 
     echo -e "\n${BLUE}=== Шаг 6: Очистка системы ===${NC}"
