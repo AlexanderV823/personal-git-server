@@ -105,3 +105,33 @@ ssh-copy-id git@IP_СЕРВЕРА
 
 ## 🔒 Безопасность и ресурсы
 Благодаря отсутствию графического интерфейса (GUI), сервер защищен от лишних уязвимостей и потребляет всего около ~60–80 МБ ОЗУ в простое. Все данные ваших проектов физически изолированы и находятся под вашим полным контролем.
+
+---
+
+## 🚨 6. Полное удаление сервера (Очистка)
+
+Если вам необходимо **полностью удалить** все следы Git-сервера, стереть базу данных, все репозитории, бэкапы и вернуть систему в исходное состояние, выполните следующие команды по SSH:
+
+```bash
+# 1. Останавливаем и удаляем службу Forgejo
+sudo systemctl stop forgejo || true
+sudo systemctl disable forgejo || true
+sudo rm -f /etc/systemd/system/forgejo.service
+sudo systemctl daemon-reload
+
+# 2. Удаляем файлы веб-панели и конфигурацию
+sudo rm -f /usr/local/bin/forgejo
+sudo rm -rf /var/lib/forgejo
+sudo rm -rf /etc/forgejo
+
+# 3. Безвозвратно удаляем пользователя git и ВСЕ репозитории с кодом
+sudo deluser --remove-home git || true
+sudo rm -rf /home/git
+
+# 4. Удаляем резервные копии и скрипт бэкапа
+sudo rm -rf /var/backups/forgejo
+sudo rm -f /usr/local/bin/forgejo-backup.sh
+
+# 5. Очищаем неиспользуемые зависимости (опционально)
+sudo apt autoremove -y
+```
