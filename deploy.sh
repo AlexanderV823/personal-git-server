@@ -1,5 +1,5 @@
 #!/bin/bash
-# Скрипт управления Git-сервером для локального сервера (Intel Atom 330, 4GB RAM, Debian Server)
+# Скрипт управления Git-сервером для Debian-подобных систем (Debian, Ubuntu, Astra Linux и др.)
 
 set -e
 
@@ -9,7 +9,7 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== Управление Git-сервером (Intel Atom 330) ===${NC}"
+echo -e "${BLUE}=== Управление Git-сервером ===${NC}"
 echo "1) Полная установка и настройка Git-сервера"
 echo "2) ПОЛНОЕ УДАЛЕНИЕ всех компонентов (очистка)"
 read -p "Выберите действие (1 или 2): " main_choice
@@ -23,6 +23,9 @@ validate_port() {
         return 1
     fi
 }
+
+# Динамический поиск бинарника ufw для совместимости с разными версиями Linux
+UFW_BIN=$(command -v ufw || echo "/usr/sbin/ufw")
 
 # Автоматическое определение локальной подсети
 LOCAL_SUBNET=$(ip route show | grep -E 'proto kernel.*scope link' | awk '{print $1}' | head -n 1)
@@ -80,18 +83,17 @@ if [[ "$main_choice" == "2" ]]; then
     sudo rm -f /usr/local/bin/forgejo-backup.sh
 
     echo -e "\n${BLUE}=== Шаг 5: Умная очистка правил UFW ===${NC}"
-    if command -v ufw &>/dev/null || [ -x /usr/sbin/ufw ]; then
+    if command -v "$UFW_BIN" &>/dev/null || [ -x "$UFW_BIN" ]; then
         echo "Поиск и автоматическое удаление всех правил для порта $del_web_port..."
-        
-        RULES_TO_DELETE=$(sudo /usr/sbin/ufw status numbered | grep -E "\[[ 0-9]+\]" | grep -E "[[:space:]]${del_web_port}(/|[[:space:]])" | awk -F'[' '{print $2}' | awk -F']' '{print $1}' | tr -d ' ' | sort -rn)
+        # Сканируем таблицу по номерам строк для точечной очистки (исправленная регулярка)
+        RULES_TO_DELETE=$(sudo "$UFW_BIN" status numbered | grep -E "\[[ 0-9]+\]" | grep -E "[[:space:]]${del_web_port}(/|[[:space:]])" | awk -F'[' '{print $2}' | awk -F']' '{print $1}' | tr -d ' ' | sort -rn)
 
         if [ -n "$RULES_TO_DELETE" ]; then
             for rule_num in $RULES_TO_DELETE; do
-                # Используем полный путь к ufw, чтобы избежать проблем со средой окружения в Debian
-                sudo /usr/sbin/ufw --force delete "$rule_num"
+                sudo "$UFW_BIN" --force delete "$rule_num"
                 echo "Правило UFW №$rule_num для порта $del_web_port успешно удалено."
             done
-            sudo /usr/sbin/ufw reload
+            sudo "$UFW_BIN" reload
             echo -e "${GREEN}[УСПЕШНО] Все правила брандмауэра для порта $del_web_port очищены.${NC}"
         else
             echo "Активных правил UFW для порта $del_web_port не найдено. Очистка не требуется."
@@ -113,7 +115,7 @@ if [[ "$main_choice" == "2" ]]; then
 # ==========================================
 elif [[ "$main_choice" == "1" ]]; then
 
-    # 1. Запрос портов
+    # Опрос портов в самом начале
     while true; do
         read -p "Введите текущий порт SSH вашего сервера (по умолчанию 22): " ssh_port
         ssh_port=${ssh_port:-22}
@@ -126,20 +128,7 @@ elif [[ "$main_choice" == "1" ]]; then
         if validate_port "$web_port"; then break; else echo -e "${YELLOW}[ОШИБКА] Некорректный порт (1-65535).${NC}"; fi
     done
 
-    # 2. Выбор зон доступности в UFW
-    echo -e "\n${BLUE} Настройка зон доступности для брандмауэра UFW:${NC}"
-    
-    # Выбор для SSH
-    if [ -n "$LOCAL_SUBNET" ]; then
-        read -p "Открыть доступ к SSH ($ssh_port) для всего интернета? Если 'n' — доступ только из локальной сети $LOCAL_SUBNET (y/n): " ssh_global
-        read -p "Открыть доступ к веб-панели Forgejo ($web_port) для всего интернета? (y/n): " web_global
-    else
-        echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось определить локальную подсеть. Порты будут открыты глобально.${NC}"
-        ssh_global="y"
-        web_global="y"
-    fi
-
-    echo -e "\n${BLUE}=== Шаг 1: Обновление Debian и установка базовых утилит ===${NC}"
+    echo -e "\n${BLUE}=== Шаг 1: Обновление Linux и установка базовых утилит ===${NC}"
     sudo apt update && sudo apt upgrade -y
     sudo apt install git wget ufw -y
 
@@ -182,8 +171,8 @@ elif [[ "$main_choice" == "1" ]]; then
         CURRENT_USER=$(logname || echo $USER)
         SERVER_IP=$(hostname -I | awk '{print $1}')
         echo -e "\n${YELLOW}🔑 КОМАНДА ДЛЯ СКАЧИВАНИЯ СОЗДАННОГО SSH-КЛЮЧА:${NC}"
-        echo "Откройте терминал на своем РАБОЧЕМ КОМПЬЮТЕРЕ и выполните (замените ИМЯ_ПОЛЬЗОВАТЕЛЯ на профиль вашего ПК):"
-        echo -e "${BLUE}scp -P $ssh_port ${CURRENT_USER}@${SERVER_IP}:/tmp/git_id_ed25519 /Users/ИМЯ_ПОЛЬЗОВАТЕЛЯ/.ssh/home_git_key${NC}"
+        echo "Откройте терминал на своем РАБОЧЕМ КОМПЬЮТЕРЕ и выполните:"
+        echo -e "${BLUE}scp -P $ssh_port ${CURRENT_USER}@${SERVER_IP}:/tmp/git_id_ed25519 ~/.ssh/home_git_key${NC}"
         echo -e "После скачивания удалите временный файл на сервере: ${YELLOW}rm /tmp/git_id_ed25519${NC}\n"
     else
         # Вариант 2: Пользователь отказался от генерации. Спрашиваем про подготовку под свои ключи
@@ -202,6 +191,18 @@ elif [[ "$main_choice" == "1" ]]; then
     echo -e "\n${BLUE}=== Шаг 4: Установка веб-панели Forgejo ===${NC}"
     read -p "Хотите установить легковесную веб-панель Forgejo? (y/n): " setup_web
     if [[ $setup_web == "y" || $setup_web == "Y" ]]; then
+        
+        # Настройка зон доступности UFW
+        echo -e "\n${BLUE} Настройка зон доступности для брандмауэра UFW:${NC}"
+        if [ -n "$LOCAL_SUBNET" ]; then
+            read -p "Открыть доступ к SSH ($ssh_port) для всего интернета? Если 'n' — доступ только из локальной сети $LOCAL_SUBNET (y/n): " ssh_global
+            read -p "Открыть доступ к веб-панели Forgejo ($web_port) для всего интернета? (y/n): " web_global
+        else
+            echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось определить локальную подсеть. Порты будут открыты глобально.${NC}"
+            ssh_global="y"
+            web_global="y"
+        fi
+
         echo "Установка дополнительных зависимостей (sqlite3)..."
         sudo apt install sqlite3 -y
 
@@ -223,7 +224,7 @@ elif [[ "$main_choice" == "1" ]]; then
         # Создание Systemd службы
         cat <<EOF | sudo tee /etc/systemd/system/forgejo.service > /dev/null
 [Unit]
-Description=Forgejo (Git Server for Intel Atom)
+Description=Forgejo (Git Server)
 After=network.target
 
 [Service]
@@ -246,22 +247,22 @@ EOF
         # Применение правил безопасности UFW
         echo "Применение правил безопасности UFW..."
         if [[ $ssh_global == "y" || $ssh_global == "Y" || -z "$LOCAL_SUBNET" ]]; then
-            sudo ufw allow "$ssh_port"/tcp
+            sudo "$UFW_BIN" allow "$ssh_port"/tcp
             echo -e "${GREEN}[UFW] Порт SSH ($ssh_port) открыт глобально.${NC}"
         else
-            sudo ufw allow from "$LOCAL_SUBNET" to any port "$ssh_port" proto tcp
+            sudo "$UFW_BIN" allow from "$LOCAL_SUBNET" to any port "$ssh_port" proto tcp
             echo -e "${GREEN}[UFW] Порт SSH ($ssh_port) доступен только из $LOCAL_SUBNET.${NC}"
         fi
 
         if [[ $web_global == "y" || $web_global == "Y" || -z "$LOCAL_SUBNET" ]]; then
-            sudo ufw allow "$web_port"/tcp
+            sudo "$UFW_BIN" allow "$web_port"/tcp
             echo -e "${GREEN}[UFW] Веб-панель Forgejo ($web_port) открыта глобально.${NC}"
         else
-            sudo ufw allow from "$LOCAL_SUBNET" to any port "$web_port" proto tcp
+            sudo "$UFW_BIN" allow from "$LOCAL_SUBNET" to any port "$web_port" proto tcp
             echo -e "${GREEN}[UFW] Веб-панель Forgejo ($web_port) доступна только из $LOCAL_SUBNET.${NC}"
         fi
 
-        echo "y" | sudo ufw enable
+        echo "y" | sudo "$UFW_BIN" enable
         
         SERVER_IP=$(hostname -I | awk '{print $1}')
         echo -e "${GREEN}[УСПЕШНО] Forgejo запущен! Доступ: http://$SERVER_IP:$web_port${NC}"
@@ -282,14 +283,14 @@ EOF
                 fi
             done
 
-        while true; do
-            read -p "Сколько дней хранить резервные копии? (например, 30): " backup_days
-            if [[ $backup_days =~ ^[0-9]+$ ]] && [ "$backup_days" -gt 0 ]; then
-                break
-            else
-                echo -e "${YELLOW}[ОШИБКА] Введите корректное число дней.${NC}"
-            fi
-        done
+            while true; do
+                read -p "Сколько дней хранить резервные копии? (например, 30): " backup_days
+                if [[ $backup_days =~ ^[0-9]+$ ]] && [ "$backup_days" -gt 0 ]; then
+                    break
+                else
+                    echo -e "${YELLOW}[ОШИБКА] Введите корректное число дней.${NC}"
+                fi
+            done
 
             sudo mkdir -p /var/backups/forgejo
             sudo chown git:git /var/backups/forgejo
