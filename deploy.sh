@@ -9,7 +9,7 @@ NC='\033[0m'
 
 echo -e "${BLUE}=== Шаг 1: Обновление Debian и установка зависимостей ===${NC}"
 sudo apt update && sudo apt upgrade -y
-sudo apt install git curl sqlite3 -y
+sudo apt install git curl -y
 
 echo -e "\n${BLUE}=== Шаг 2: Создание изолированного пользователя git ===${NC}"
 if id "git" &>/dev/null; then
@@ -36,6 +36,10 @@ fi
 echo -e "\n${BLUE}=== Шаг 4: Установка веб-панели Forgejo ===${NC}"
 read -p "Хотите установить легковесную веб-панель Forgejo? (y/n): " setup_web
 if [[ $setup_web == "y" || $setup_web == "Y" ]]; then
+    # Доустанавливаем sqlite3
+    echo "Установка дополнительных зависимостей (sqlite3)..."
+    sudo apt install sqlite3 -y
+
     echo "Скачивание Forgejo (архитектура amd64)..."
     cd /tmp
     # Загружаем стабильную версию
