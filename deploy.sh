@@ -14,6 +14,16 @@ echo "1) Полная установка и настройка Git-сервер�
 echo "2) ПОЛНОЕ УДАЛЕНИЕ всех компонентов (очистка)"
 read -p "Выберите действие (1 или 2): " main_choice
 
+# Функция для валидации портов
+validate_port() {
+    local port=$1
+    if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 # ==========================================
 # РЕЖИМ 2: ПОЛНОЕ УДАЛЕНИЕ СЕРВЕРА
 # ==========================================
@@ -26,6 +36,12 @@ if [[ "$main_choice" == "2" ]]; then
         echo "Удаление отменено."
         exit 0
     fi
+
+    while true; do
+        read -p "Укажите порт Forgejo, который использовался (по умолчанию 3000): " del_web_port
+        del_web_port=${del_web_port:-3000}
+        if validate_port "$del_web_port"; then break; else echo -e "${YELLOW}Некорректный порт.${NC}"; fi
+    done
 
     echo -e "\n${BLUE}=== Шаг 1: Остановка и удаление службы Forgejo ===${NC}"
     # Проверяем, существует ли файл службы в системе
@@ -59,9 +75,17 @@ if [[ "$main_choice" == "2" ]]; then
     echo -e "\n${BLUE}=== Шаг 4: Удаление бэкапов и скриптов ===${NC}"
     sudo rm -rf /var/backups/forgejo
     sudo rm -f /usr/local/bin/forgejo-backup.sh
-    echo "Резервные копии и скрипты автоматизации удалены."
 
-    echo -e "\n${BLUE}=== Шаг 5: Очистка системы ===${NC}"
+    echo -e "\n${BLUE}=== Шаг 5: Умная очистка правил UFW ===${NC}"
+    if command -v ufw &>/dev/null; then
+        echo "Удаляем правило веб-панели из брандмауэра..."
+        # Удаляем ТОЛЬКО порт веб-панели. SSH порт не трогаем.
+        sudo ufw delete allow "$del_web_port"/tcp || true
+        sudo ufw reload
+        echo -e "${GREEN}[УСПЕШНО] Правило для порта $del_web_port удалено. Доступ по SSH сохранен.${NC}"
+    fi
+
+    echo -e "\n${BLUE}=== Шаг 6: Очистка системы ===${NC}"
     sudo apt autoremove -y
 
     echo -e "\n${GREEN}=== Все компоненты сервера успешно удалены! ===${NC}"
@@ -71,6 +95,18 @@ if [[ "$main_choice" == "2" ]]; then
 # РЕЖИМ 1: УСТАНОВКА СЕРВЕРА
 # ==========================================
 elif [[ "$main_choice" == "1" ]]; then
+
+    while true; do
+        read -p "Введите текущий порт SSH вашего сервера (по умолчанию 22): " ssh_port
+        ssh_port=${ssh_port:-22}
+        if validate_port "$ssh_port"; then break; else echo -e "${YELLOW}[ОШИБКА] Некорректный порт (1-65535).${NC}"; fi
+    done
+
+    while true; do
+        read -p "Выберите порт для веб-панели Forgejo (по умолчанию 3000): " web_port
+        web_port=${web_port:-3000}
+        if validate_port "$web_port"; then break; else echo -e "${YELLOW}[ОШИБКА] Некорректный порт (1-65535).${NC}"; fi
+    done
 
     echo -e "\n${BLUE}=== Шаг 1: Обновление Debian и установка базовых утилит ===${NC}"
     sudo apt update && sudo apt upgrade -y
@@ -130,7 +166,7 @@ User=git
 Group=git
 WorkingDirectory=/var/lib/forgejo/
 RuntimeDirectory=forgejo
-ExecStart=/usr/local/bin/forgejo web --config /etc/forgejo/app.ini
+ExecStart=/usr/local/bin/forgejo web --port $web_port --config /etc/forgejo/app.ini
 Restart=always
 Environment=USER=git HOME=$GIT_HOME GITEA_WORK_DIR=/var/lib/forgejo
 
@@ -141,30 +177,38 @@ EOF
         sudo systemctl daemon-reload
         sudo systemctl enable --now forgejo
 
-        # Настройка брандмауэра UFW (Доступ строго для локальной сети)
+        # Настройка брандмауэра UFW
         echo "Настройка правил безопасности UFW..."
         
         # Определяем локальную подсеть роутера (например, 192.168.1.0/24)
         LOCAL_SUBNET=$(ip route show | grep -E 'proto kernel.*scope link' | awk '{print $1}' | head -n 1)
 
         if [ -n "$LOCAL_SUBNET" ]; then
-            # Сбрасываем правила и ставим блокировку на всё входящее по умолчанию
-            sudo ufw default deny incoming
-            sudo ufw default allow outgoing
-
-            # Разрешаем SSH (22) и веб-панель Forgejo (3000) ТОЛЬКО из локальной сети
-            sudo ufw allow from "$LOCAL_SUBNET" to any port 22 proto tcp
-            sudo ufw allow from "$LOCAL_SUBNET" to any port 3000 proto tcp
-
-            # Включаем файрвол без интерактивного запроса подтверждения
+            # Доступ к SSH доступен ТОЛЬКО из локальной сети
+            sudo ufw allow from "$LOCAL_SUBNET" to any port "$ssh_port" proto tcp
+            # Доступ к Forgejo доступен ТОЛЬКО из локальной сети
+            sudo ufw allow from "$LOCAL_SUBNET" to any port "$web_port" proto tcp
             echo "y" | sudo ufw enable
-            echo -e "${GREEN}[УСПЕШНО] UFW включен. Доступ к SSH и Forgejo открыт только для подсети: $LOCAL_SUBNET${NC}"
+            echo -e "${GREEN}[УСПЕШНО] UFW настроен. SSH ($ssh_port) и Forgejo ($web_port) доступны ТОЛЬКО из локальной сети ($LOCAL_SUBNET).${NC}"
         else
-            echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось определить локальную подсеть. UFW не настроен.${NC}"
+            echo -e "${YELLOW}[ВНИМАНИЕ] Не удалось автоматически определить локальную подсеть.${NC}"
+            echo "Если этот сервер находится за роутером (NAT), открытие портов глобально безопасно."
+            echo "Если сервер подключен к интернету напрямую, открытие портов сделает их доступными всему миру."
+            
+            read -p "Хотите открыть порты SSH ($ssh_port) и Forgejo ($web_port) глобально для всех подключений? (y/n): " allow_global
+            
+            if [[ $allow_global == "y" || $allow_global == "Y" ]]; then
+                sudo ufw allow "$ssh_port"/tcp
+                sudo ufw allow "$web_port"/tcp
+                echo "y" | sudo ufw enable
+                echo -e "${GREEN}[УСПЕШНО] Порты $ssh_port и $web_port открыты глобально в UFW.${NC}"
+            else
+                echo -e "${YELLOW}Настройка UFW пропущена. Вам потребуется открыть порты $ssh_port и $web_port вручную.${NC}"
+            fi
         fi
         
         SERVER_IP=$(hostname -I | awk '{print $1}')
-        echo -e "${GREEN}[УСПЕШНО] Forgejo запущен! Доступ в локальной сети: http://$SERVER_IP:3000${NC}"
+        echo -e "${GREEN}[УСПЕШНО] Forgejo запущен! Доступ: http://$SERVER_IP:$web_port${NC}"
 
         # Настройка бэкапа SQLite3
         echo -e "\n${BLUE}=== Шаг 5: Настройка бэкапа SQLite3 (Cron) ===${NC}"
@@ -202,7 +246,7 @@ DB_PATH="/var/lib/forgejo/data/gitea.db"
 DATE=\$(date +%Y-%m-%d_%H-%M-%S)
 
 if [ -f "\$DB_PATH" ]; then
-    sqlite3 "$DB_PATH" ".backup '\$BACKUP_DIR/forgejo_db_\$DATE.sqlite'"
+    sqlite3 "\$DB_PATH" ".backup '\$BACKUP_DIR/forgejo_db_\$DATE.sqlite'"
     chown git:git "\$BACKUP_DIR/forgejo_db_\$DATE.sqlite"
 fi
 
